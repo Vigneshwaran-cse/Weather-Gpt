@@ -3,26 +3,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Header } from './components/Header';
-import { MobileBottomNav, NavItem } from './components/MobileBottomNav';
-import { CurrentWeatherCard } from './components/CurrentWeatherCard';
-import { WeatherTimeline } from './components/WeatherTimeline';
-import { ForecastSection } from './components/ForecastSection';
-import { WeatherAlertCard } from './components/WeatherAlertCard';
-import { AiChatSection } from './components/AiChatSection';
-import { IntelligenceDashboard } from './components/IntelligenceDashboard';
-import { WeatherBackground } from './components/WeatherBackground';
+import React, { useState, useEffect, useCallback } from 'react';
+import { SidebarNav, NavTab } from './components/SidebarNav';
+import { TopHeaderBar } from './components/TopHeaderBar';
+import { HeroBanner } from './components/HeroBanner';
+import { WeatherDashboardView } from './components/WeatherDashboardView';
 import { RoutePlanner } from './components/RoutePlanner';
 import { ClimateInsights } from './components/ClimateInsights';
 import { OccupationalView } from './components/OccupationalView';
 import { SavedLocationsView } from './components/SavedLocationsView';
 import { MapWeatherView } from './components/MapWeatherView';
-import { AccessibilityView } from './components/AccessibilityView';
 import { FarmerModeDashboard } from './components/FarmerModeDashboard';
 import { LocationData, VerifiedWeatherData, HourlyForecast } from './types';
-import { fetchWeather, reverseGeocode } from './services/api';
-import { AlertCircle, RefreshCw, Sparkles, CloudSun, ShieldCheck } from 'lucide-react';
+import { WeatherIntelligenceBrief } from '../services/briefTypes';
+import { fetchWeather, reverseGeocode, sendChatMessage } from './services/api';
+import { AlertCircle, RefreshCw, X, Sparkles, Volume2 } from 'lucide-react';
 import { useLanguage } from './i18n/LanguageContext';
 
 const INITIAL_LOCATION: LocationData = {
@@ -33,20 +28,40 @@ const INITIAL_LOCATION: LocationData = {
   longitude: 80.2707,
 };
 
+const SAVER_KEY = 'weathergpt_data_saver';
+
+interface AiAnswerState {
+  question: string;
+  answer: string;
+  loading: boolean;
+}
+
 export default function App() {
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
 
-  // Navigation dock state: default is 'ai' (Main WeatherGPT Chatbot as central feature)
-  const [activeNav, setActiveNav] = useState<NavItem>('ai');
+  // Active navigation tab (default: 'home' matching reference interface)
+  const [activeTab, setActiveTab] = useState<NavTab>('home');
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
-  // Weather Overview toggle (allows viewing full weather dashboard, timeline, forecast)
-  const [showWeatherDashboard, setShowWeatherDashboard] = useState<boolean>(false);
+  // Theme state: default 'light' matching attached reference image
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      return (localStorage.getItem('weathergpt_theme') as 'light' | 'dark') || 'light';
+    } catch {
+      return 'light';
+    }
+  });
 
-  // Dedicated Farmer Mode active state
-  const [isFarmerModeActive, setIsFarmerModeActive] = useState<boolean>(false);
-  const [showLegacyChat, setShowLegacyChat] = useState<boolean>(false);
+  // Data Saver state
+  const [dataSaver, setDataSaver] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SAVER_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
-  // Initialize from localStorage if previous location was saved
+  // Location state
   const [currentLocation, setCurrentLocation] = useState<LocationData>(() => {
     try {
       const saved = localStorage.getItem('weathergpt_current_location');
@@ -61,11 +76,43 @@ export default function App() {
   });
 
   const [weatherData, setWeatherData] = useState<VerifiedWeatherData | null>(null);
+  const [brief, setBrief] = useState<WeatherIntelligenceBrief | null>(null);
+  const [aiAnswer, setAiAnswer] = useState<AiAnswerState | null>(null);
   const [selectedHourForecast, setSelectedHourForecast] = useState<HourlyForecast | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Automatic one-time current location detection without repeated prompts
+  // Route Planner modal state
+  const [isRouteModalOpen, setIsRouteModalOpen] = useState<boolean>(false);
+  const [routeOrigin, setRouteOrigin] = useState<string>(INITIAL_LOCATION.name);
+  const [routeDestination, setRouteDestination] = useState<string>('Pondicherry');
+  const [routeAutoExecute, setRouteAutoExecute] = useState<boolean>(false);
+
+  // Sync theme class & attribute to HTML root
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.classList.remove('light');
+    } else {
+      root.classList.remove('dark');
+      root.classList.add('light');
+    }
+    root.dataset.theme = theme;
+    try {
+      localStorage.setItem('weathergpt_theme', theme);
+    } catch {}
+  }, [theme]);
+
+  // Sync Data Saver attribute to HTML root
+  useEffect(() => {
+    document.documentElement.dataset.saver = dataSaver ? 'on' : 'off';
+    try {
+      localStorage.setItem(SAVER_KEY, dataSaver ? '1' : '0');
+    } catch {}
+  }, [dataSaver]);
+
+  // One-time automatic location detection
   useEffect(() => {
     const hasChecked = localStorage.getItem('weathergpt_geo_prompted');
     if (!hasChecked && typeof window !== 'undefined' && 'geolocation' in navigator) {
@@ -86,293 +133,367 @@ export default function App() {
           }
         },
         (err) => {
-          // Gracefully fallback without repeated prompt or annoying alert
-          console.info('Auto location access denied or timeout:', err.message);
+          console.info('Auto location access denied:', err.message);
         },
         { timeout: 7000, maximumAge: 300000, enableHighAccuracy: false }
       );
     }
   }, []);
 
-  // Route Planner modal state
-  const [isRouteModalOpen, setIsRouteModalOpen] = useState<boolean>(false);
-  const [routeOrigin, setRouteOrigin] = useState<string>(INITIAL_LOCATION.name);
-  const [routeDestination, setRouteDestination] = useState<string>('Pondicherry');
-  const [routeAutoExecute, setRouteAutoExecute] = useState<boolean>(false);
+  // Fetch weather data & intelligence brief
+  const loadWeatherData = useCallback(
+    async (loc: LocationData, userQuestion?: string) => {
+      setIsLoading(true);
+      setErrorMessage(null);
+      setSelectedHourForecast(null);
 
-  const handleOpenRoutePlanner = (origin?: string, dest?: string, autoExec: boolean = false) => {
-    if (origin) setRouteOrigin(origin);
-    else setRouteOrigin(currentLocation.name);
-    if (dest) setRouteDestination(dest);
-    setRouteAutoExecute(autoExec);
-    setIsRouteModalOpen(true);
-  };
+      try {
+        // 1. Fetch raw weather metrics from Open-Meteo
+        const data = await fetchWeather(loc);
+        setWeatherData(data);
 
-  const loadWeather = useCallback(async (loc: LocationData) => {
-    setIsLoading(true);
-    setErrorMessage(null);
-    setSelectedHourForecast(null);
-    try {
-      const data = await fetchWeather(loc);
-      setWeatherData(data);
-    } catch (err: any) {
-      console.error('Failed to load weather:', err);
-      setErrorMessage(err.message || t('weatherError') || 'Unable to retrieve weather data.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [t]);
+        // 2. Fetch intelligence brief from server
+        try {
+          const res = await fetch('/api/intelligence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              location: loc,
+              question: userQuestion || undefined,
+              language,
+              skipAi: dataSaver,
+            }),
+          });
+          if (res.ok) {
+            const b = (await res.json()) as WeatherIntelligenceBrief;
+            setBrief(b);
+          }
+        } catch (briefErr) {
+          console.warn('Intelligence brief fetch failed:', briefErr);
+        }
+      } catch (err: any) {
+        console.error('Failed to load weather:', err);
+        setErrorMessage(err.message || t('weatherError') || 'Unable to retrieve weather data.');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [language, dataSaver, t]
+  );
 
   useEffect(() => {
-    loadWeather(currentLocation);
-  }, [currentLocation, loadWeather]);
+    loadWeatherData(currentLocation);
+  }, [currentLocation, loadWeatherData]);
 
   const handleSelectLocation = (newLoc: LocationData) => {
     setCurrentLocation(newLoc);
+    setAiAnswer(null);
     try {
       localStorage.setItem('weathergpt_current_location', JSON.stringify(newLoc));
     } catch {}
   };
 
   const handleRefresh = () => {
-    loadWeather(currentLocation);
+    loadWeatherData(currentLocation);
   };
 
-  // Determine active atmosphere properties for background animation
-  const backgroundProps = useMemo(() => {
-    if (selectedHourForecast) {
-      const hourNum = selectedHourForecast.hourNumber ?? 12;
-      const isDay =
-        selectedHourForecast.period !== undefined
-          ? selectedHourForecast.period !== 'night'
-          : hourNum >= 6 && hourNum < 18;
+  // Handle user asking an AI question
+  const handleAskQuestion = async (questionText: string) => {
+    if (!questionText.trim()) return;
 
-      return {
-        weatherCode: selectedHourForecast.weatherCode,
-        isDay,
-        temperature: selectedHourForecast.temperature,
-        precipitation: selectedHourForecast.precipitation,
-        rainProbability: selectedHourForecast.rainProbability,
-        conditionText: selectedHourForecast.condition,
-      };
+    setAiAnswer({
+      question: questionText,
+      answer: 'Analyzing weather conditions and generating response...',
+      loading: true,
+    });
+
+    try {
+      const chatRes = await sendChatMessage(questionText, currentLocation, language);
+      setAiAnswer({
+        question: questionText,
+        answer: chatRes.reply || 'No response returned.',
+        loading: false,
+      });
+
+      // Also refresh intelligence brief
+      loadWeatherData(currentLocation, questionText);
+    } catch (err: any) {
+      setAiAnswer({
+        question: questionText,
+        answer: err.message || 'Unable to retrieve AI weather answer right now.',
+        loading: false,
+      });
     }
-
-    if (weatherData) {
-      return {
-        weatherCode: weatherData.current.weatherCode,
-        isDay: weatherData.current.isDay,
-        temperature: weatherData.current.temperature,
-        precipitation: weatherData.current.precipitation,
-        rainProbability: weatherData.current.rainProbability,
-        conditionText: weatherData.current.condition,
-      };
-    }
-
-    return {
-      weatherCode: 0,
-      isDay: true,
-      temperature: 28,
-      precipitation: 0,
-      rainProbability: 0,
-      conditionText: 'Clear',
-    };
-  }, [selectedHourForecast, weatherData]);
-
-  const handleNavSelect = (item: NavItem) => {
-    setActiveNav(item);
-    setShowWeatherDashboard(false);
-    setIsFarmerModeActive(false);
   };
 
-  const handleOpenFarmerMode = () => {
-    setIsFarmerModeActive(true);
-    setShowWeatherDashboard(false);
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  const handleExitFarmerMode = () => {
-    setIsFarmerModeActive(false);
+  const handleToggleDataSaver = () => {
+    setDataSaver((prev) => !prev);
+  };
+
+  const handleOpenRoutePlanner = (origin?: string, dest?: string, autoExec: boolean = false) => {
+    setRouteOrigin(origin || currentLocation.name);
+    setRouteDestination(dest || 'Pondicherry');
+    setRouteAutoExecute(autoExec);
+    setIsRouteModalOpen(true);
+  };
+
+  const speakText = (text: string) => {
+    if (!('speechSynthesis' in window) || !text) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-IN';
+    window.speechSynthesis.speak(u);
   };
 
   return (
-    <div className="h-[100dvh] max-h-[100dvh] w-full bg-slate-950 text-slate-100 flex flex-col font-sans relative selection:bg-sky-500 selection:text-white overflow-hidden overscroll-none">
-      {/* Dynamic Animated Weather Background Reacting to Live Meteorological Data */}
-      <WeatherBackground {...backgroundProps} />
+    <div className="min-h-screen w-full bg-[#F0F4FA] dark:bg-[#0B0F19] text-slate-800 dark:text-slate-100 flex flex-col lg:flex-row font-sans selection:bg-blue-500 selection:text-white">
+      {/* 1. LEFT SIDEBAR NAVIGATION matching Reference Image */}
+      <SidebarNav
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        dataSaver={dataSaver}
+        onToggleDataSaver={handleToggleDataSaver}
+        isMobileOpen={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+      />
 
-      {/* Responsive application shell: compact on phones, wide and centered on larger screens. */}
-      <div className="w-full max-w-[1440px] mx-auto h-[100dvh] max-h-[100dvh] flex flex-col relative z-10 lg:border-x lg:border-slate-800/50 lg:shadow-2xl bg-slate-950/40 backdrop-blur-xs overflow-hidden">
-        {/* Clean Compact Sticky Mobile App Bar with 🌾 FARMER MODE Quick Entry */}
-        <Header
-          onBrandClick={() => {
-            setActiveNav('ai');
-            setShowWeatherDashboard(false);
-            setIsFarmerModeActive(false);
-          }}
-          onFarmerModeClick={handleOpenFarmerMode}
-          isFarmerModeActive={isFarmerModeActive}
+      {/* 2. MAIN APPLICATION CONTENT AREA */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen">
+        {/* Top Header Controls Bar */}
+        <TopHeaderBar
+          location={currentLocation}
+          updatedTime={weatherData?.updated}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          onOpenMobileMenu={() => setIsMobileSidebarOpen(true)}
         />
 
-        {/* Dynamic Main Content Container: automatically calculates remaining available height between Header & Bottom Nav */}
-        <main className="flex-1 min-h-0 w-full overflow-hidden flex flex-col relative px-2.5 xs:px-3 sm:px-6 lg:px-10 xl:px-14 py-1.5 xs:py-2 lg:py-5">
-          {/* Global API Error Notice if any */}
-          {errorMessage && (
-            <div className="shrink-0 mb-2 p-2 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-200 text-xs flex items-center justify-between gap-2 shadow-xs">
-              <div className="flex items-center gap-1.5 truncate">
-                <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                <span className="truncate">{errorMessage}</span>
-              </div>
-              <button
-                type="button"
-                onClick={handleRefresh}
-                className="px-2 py-0.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
-              >
-                <RefreshCw className="w-2.5 h-2.5" />
-                <span>{t('retry')}</span>
-              </button>
+        {/* Global Error Notice if any */}
+        {errorMessage && (
+          <div className="mx-4 sm:mx-6 lg:mx-8 mb-4 p-3 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-700 dark:text-rose-300 text-xs flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 truncate">
+              <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+              <span className="truncate">{errorMessage}</span>
             </div>
-          )}
+            <button
+              type="button"
+              onClick={handleRefresh}
+              className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
 
-          {/* VIEW: DEDICATED FARMER MODE DASHBOARD */}
-          {isFarmerModeActive ? (
-            <FarmerModeDashboard
-              currentLocation={currentLocation}
-              weatherData={weatherData}
-              onSelectFarmLocation={handleSelectLocation}
-              onExitFarmerMode={handleExitFarmerMode}
-            />
-          ) : showWeatherDashboard ? (
-            /* VIEW: FULL WEATHER DASHBOARD (When toggled from AI or Saved views - scrolls smoothly internally) */
-            <div className="flex-1 min-h-0 w-full overflow-y-auto scrollbar-none space-y-3 pb-3 pr-0.5 animate-in fade-in duration-200">
-              {/* Back to AI Chat Button */}
-              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs shrink-0">
-                <div className="flex items-center gap-2 text-sky-400 font-semibold truncate">
-                  <CloudSun className="w-4 h-4 shrink-0" />
-                  <span className="truncate">{t('weatherDashboard')} · {currentLocation.name}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowWeatherDashboard(false)}
-                  className="px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer transition-all shadow-xs shrink-0"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  <span>{t('returnToAi')}</span>
-                </button>
-              </div>
+        {/* MAIN BODY CONTENT BASED ON ACTIVE TAB */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto space-y-6">
+          {/* TAB 1: HOME (WEATHER INTELLIGENCE DASHBOARD matching reference image) */}
+          {activeTab === 'home' && (
+            <div className="space-y-6 animate-in fade-in duration-150">
+              {/* Hero Banner Section */}
+              <HeroBanner
+                currentLocation={currentLocation}
+                onSelectLocation={handleSelectLocation}
+                onAskQuestion={handleAskQuestion}
+                isLoading={isLoading || (aiAnswer?.loading ?? false)}
+              />
 
-              {weatherData && (
-                <>
-                  {/* Weather Alert Component */}
-                  <WeatherAlertCard
-                    alerts={weatherData.alerts}
-                    source={weatherData.source}
-                  />
-
-                  {/* Hero Current Weather Card */}
-                  <CurrentWeatherCard
-                    weather={weatherData}
-                    onRefresh={handleRefresh}
-                    isLoading={isLoading}
-                    selectedHourForecast={selectedHourForecast}
-                    onResetHour={() => setSelectedHourForecast(null)}
-                  />
-
-                  {/* 24-Hour Weather Timeline (Horizontal Touch Carousel) */}
-                  <WeatherTimeline
-                    hourly={weatherData.hourly}
-                    location={currentLocation}
-                    onHourSelect={(hour) => setSelectedHourForecast(hour)}
-                  />
-
-                  {/* 7-Day Forecast Summary */}
-                  <ForecastSection
-                    daily={weatherData.daily}
-                    source={weatherData.source}
-                    forecastModel={weatherData.forecastModel}
-                  />
-
-                  {/* Climate Trends */}
-                  <ClimateInsights weather={weatherData} />
-
-                  {/* Footer Grounding Trust Marker */}
-                  <div className="pt-2 border-t border-slate-800/60 text-[10px] text-slate-500 text-center flex flex-col items-center gap-1">
-                    <div className="flex items-center gap-1.5 text-slate-400">
-                      <ShieldCheck className="w-3 h-3 text-sky-400" />
-                      <span>{t('groundedNoticeFooter')}</span>
+              {/* Interactive AI Answer Banner Box (when user asks a question) */}
+              {aiAnswer && (
+                <div className="p-5 rounded-3xl bg-gradient-to-r from-blue-600 via-sky-600 to-indigo-600 text-white shadow-lg space-y-3 relative overflow-hidden">
+                  <div className="flex items-center justify-between gap-2 border-b border-white/20 pb-2">
+                    <div className="flex items-center gap-2 font-bold text-sm">
+                      <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                      <span>WeatherGPT AI Answer</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setAiAnswer(null)}
+                      className="p-1 rounded-full hover:bg-white/20 text-white/80 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              {/* 1. OCCUPATIONAL (Leftmost tab) */}
-              {activeNav === 'occupational' && (
-                <OccupationalView
-                  currentLocation={currentLocation}
-                  weatherData={weatherData}
-                  onOpenChatWithPrompt={() => {
-                    setActiveNav('ai');
-                    setShowWeatherDashboard(false);
-                    setIsFarmerModeActive(false);
-                  }}
-                  onSelectLocation={handleSelectLocation}
-                />
-              )}
 
-              {/* 2. SAVED LOCATIONS (Left tab) */}
-              {activeNav === 'saved' && (
-                <SavedLocationsView
-                  currentLocation={currentLocation}
-                  onSelectLocation={handleSelectLocation}
-                  onViewWeatherDashboard={() => setShowWeatherDashboard(true)}
-                />
-              )}
+                  <div>
+                    <div className="text-xs text-sky-200 font-semibold mb-1">
+                      Question: "{aiAnswer.question}"
+                    </div>
+                    {aiAnswer.loading ? (
+                      <div className="flex items-center gap-2 text-xs text-sky-100 py-2">
+                        <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                        <span>Generating grounded answer for {currentLocation.name}...</span>
+                      </div>
+                    ) : (
+                      <p className="text-sm font-medium leading-relaxed whitespace-pre-line text-white">
+                        {aiAnswer.answer}
+                      </p>
+                    )}
+                  </div>
 
-              {/* 3. AI CHATBOT (CENTER / MAIN - PRIMARY FEATURE) */}
-              {activeNav === 'ai' && (
-                <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden">
-                  {!showLegacyChat ? (
-                    <IntelligenceDashboard
-                      currentLocation={currentLocation}
-                      onSelectLocation={handleSelectLocation}
-                      onOpenLegacyChat={() => setShowLegacyChat(true)}
-                    />
-                  ) : (
-                  <>
-                  <button type="button" onClick={() => setShowLegacyChat(false)} className="shrink-0 mb-1 text-[11px] text-sky-300 underline self-start cursor-pointer">← Weather Intelligence</button>
-                  <AiChatSection
-                    currentLocation={currentLocation}
-                    onLocationDetectedInChat={(newLoc) => setCurrentLocation(newLoc)}
-                    onOpenRoutePlanner={(origin, dest) => handleOpenRoutePlanner(origin, dest, true)}
-                    onGoBack={() => setShowWeatherDashboard(true)}
-                    onFarmerModeClick={handleOpenFarmerMode}
-                  />
-                  </>
+                  {!aiAnswer.loading && (
+                    <div className="pt-2 border-t border-white/20 flex items-center justify-between text-xs text-sky-100">
+                      <button
+                        type="button"
+                        onClick={() => speakText(aiAnswer.answer)}
+                        className="flex items-center gap-1.5 font-bold hover:underline cursor-pointer"
+                      >
+                        <Volume2 className="w-4 h-4 text-amber-300" />
+                        <span>Listen to Answer</span>
+                      </button>
+                      <span>📍 {currentLocation.name}</span>
+                    </div>
                   )}
                 </div>
               )}
 
-              {/* 4. MAP WEATHER (Right tab) */}
-              {activeNav === 'map' && (
-                <MapWeatherView
-                  currentLocation={currentLocation}
-                  onOpenRoutePlanner={() => handleOpenRoutePlanner(currentLocation.name, 'Pondicherry', false)}
-                />
+              {/* Disaster Mode Alert Banner (if severe disaster alert active) */}
+              {brief?.disasterMode && (
+                <div role="alert" className="p-4 rounded-3xl bg-rose-600 text-white font-extrabold text-base flex items-center justify-between shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="w-6 h-6 shrink-0" />
+                    <span>🚨 Disaster Mode Active for {currentLocation.name}. Emergency precautions in effect.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('marine')}
+                    className="px-4 py-1.5 rounded-full bg-white text-rose-700 font-bold text-xs hover:bg-rose-50 cursor-pointer"
+                  >
+                    View Emergency Details
+                  </button>
+                </div>
               )}
 
-              {/* 5. ACCESSIBILITY (Rightmost tab) */}
-              {activeNav === 'access' && <AccessibilityView />}
-            </>
+              {/* Main Weather Dashboard Grid (3 Row Layout + Right Panel) */}
+              <WeatherDashboardView
+                currentLocation={currentLocation}
+                weatherData={weatherData}
+                brief={brief}
+                isLoading={isLoading}
+                onOpenMap={() => setActiveTab('map')}
+                onOpenFarming={() => setActiveTab('farming')}
+                onOpenMarine={() => setActiveTab('marine')}
+                onOpenClimate={() => setActiveTab('climate')}
+                onOpenDisaster={() => setActiveTab('marine')}
+                onStartVoice={() => {
+                  const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                  if (SR) {
+                    const r = new SR();
+                    r.lang = 'en-IN';
+                    r.onresult = (ev: any) => {
+                      const text = ev.results[0][0].transcript;
+                      handleAskQuestion(text);
+                    };
+                    r.start();
+                  } else {
+                    alert('Voice recognition is not supported in this browser.');
+                  }
+                }}
+                onRefresh={handleRefresh}
+                selectedHourForecast={selectedHourForecast}
+                onSelectHourForecast={setSelectedHourForecast}
+              />
+            </div>
+          )}
+
+          {/* TAB 2: FARMING (Dedicated Farmer Mode Dashboard) */}
+          {activeTab === 'farming' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('home')}
+                className="text-xs font-bold text-blue-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer mb-2"
+              >
+                ← Return to Home Dashboard
+              </button>
+              <FarmerModeDashboard
+                currentLocation={currentLocation}
+                weatherData={weatherData}
+                onSelectFarmLocation={handleSelectLocation}
+                onExitFarmerMode={() => setActiveTab('home')}
+              />
+            </div>
+          )}
+
+          {/* TAB 3: MARINE & OCCUPATIONAL VIEW */}
+          {activeTab === 'marine' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('home')}
+                className="text-xs font-bold text-blue-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer mb-2"
+              >
+                ← Return to Home Dashboard
+              </button>
+              <OccupationalView
+                currentLocation={currentLocation}
+                weatherData={weatherData}
+                onOpenChatWithPrompt={() => setActiveTab('home')}
+                onSelectLocation={handleSelectLocation}
+              />
+            </div>
+          )}
+
+          {/* TAB 4: CLIMATE INSIGHTS */}
+          {activeTab === 'climate' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('home')}
+                className="text-xs font-bold text-blue-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer mb-2"
+              >
+                ← Return to Home Dashboard
+              </button>
+              {weatherData && <ClimateInsights weather={weatherData} />}
+            </div>
+          )}
+
+          {/* TAB 5: INTERACTIVE MAP & ROUTE PLANNER */}
+          {activeTab === 'map' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('home')}
+                className="text-xs font-bold text-blue-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer mb-2"
+              >
+                ← Return to Home Dashboard
+              </button>
+              <MapWeatherView
+                currentLocation={currentLocation}
+                onOpenRoutePlanner={() => handleOpenRoutePlanner(currentLocation.name, 'Pondicherry', false)}
+              />
+            </div>
+          )}
+
+          {/* TAB 6: SAVED LOCATIONS */}
+          {activeTab === 'saved' && (
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setActiveTab('home')}
+                className="text-xs font-bold text-blue-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer mb-2"
+              >
+                ← Return to Home Dashboard
+              </button>
+              <SavedLocationsView
+                currentLocation={currentLocation}
+                onSelectLocation={(loc) => {
+                  handleSelectLocation(loc);
+                  setActiveTab('home');
+                }}
+                onViewWeatherDashboard={() => setActiveTab('home')}
+              />
+            </div>
           )}
         </main>
-
-        {/* Floating Persistent Instagram-Style Bottom Navigation Dock */}
-        <MobileBottomNav
-          activeNav={activeNav}
-          onSelectNav={handleNavSelect}
-        />
       </div>
 
-      {/* Floating Route Planner Modal */}
+      {/* Floating Weather-Aware Route Planner Modal */}
       {isRouteModalOpen && (
         <RoutePlanner
           isOpen={isRouteModalOpen}

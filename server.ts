@@ -742,8 +742,19 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`WeatherGPT server running on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`WeatherGPT server running on http://localhost:${PORT}`);
+  });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`Port ${PORT} is already in use. Trying port ${PORT + 1}...`);
+      app.listen(PORT + 1, '0.0.0.0', () => {
+        console.log(`WeatherGPT server running on http://localhost:${PORT + 1}`);
+      });
+    } else {
+      console.error('Server error:', err);
+    }
   });
 }
 

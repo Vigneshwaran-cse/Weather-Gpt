@@ -32,26 +32,28 @@
   }
 
   html, body, #root {
-    height: 100dvh;
-    max-height: 100dvh;
+    min-height: 100vh;
     width: 100%;
-    overflow: hidden;
     margin: 0;
     padding: 0;
-    overscroll-behavior: none;
-    -webkit-overflow-scrolling: touch;
+    touch-action: manipulation;
   }
 
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    color: #f1f5f9;
-    background-color: #060913;
+    color: #1e293b;
+    background-color: #f0f4fa;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    touch-action: manipulation;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 
-  /* Ensure all numeric readouts use tabular numerals for alignment */
+  /* Dark theme overrides when html has .dark class */
+  html.dark body {
+    color: #f1f5f9;
+    background-color: #0b0f19;
+  }
+
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
@@ -62,7 +64,7 @@
   }
 }
 
-/* Micro-interaction & Keyframe animations */
+/* Animations */
 @keyframes micPulseRing {
   0% {
     transform: scale(0.95);
@@ -78,229 +80,11 @@
   }
 }
 
-@keyframes subtleFloat {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-4px);
-  }
-}
-
-@keyframes messageSlideIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes skeletonShimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
-
 .animate-mic-pulse {
   animation: micPulseRing 1.8s infinite cubic-bezier(0.4, 0, 0.6, 1);
 }
 
-.animate-subtle-float {
-  animation: subtleFloat 4s ease-in-out infinite;
-}
-
-.animate-msg-in {
-  animation: messageSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.skeleton-shimmer {
-  background: linear-gradient(90deg, rgba(30, 41, 59, 0.4) 25%, rgba(51, 65, 85, 0.6) 50%, rgba(30, 41, 59, 0.4) 75%);
-  background-size: 200% 100%;
-  animation: skeletonShimmer 1.8s infinite;
-}
-
-/* Smooth atmospheric animations for WeatherGPT */
-
-@keyframes sunRaysRotate {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes sunPulse {
-  0%, 100% {
-    transform: scale(1);
-    opacity: 0.85;
-  }
-  50% {
-    transform: scale(1.05);
-    opacity: 0.95;
-  }
-}
-
-@keyframes heatHazeEffect {
-  0%, 100% {
-    transform: translateY(0) scaleY(1);
-    filter: blur(0.5px);
-  }
-  50% {
-    transform: translateY(-3px) scaleY(1.02);
-    filter: blur(1.2px);
-  }
-}
-
-@keyframes cloudDriftSlow {
-  0% {
-    transform: translateX(-8%);
-  }
-  50% {
-    transform: translateX(8%);
-  }
-  100% {
-    transform: translateX(-8%);
-  }
-}
-
-@keyframes cloudDriftFast {
-  0% {
-    transform: translateX(12%);
-  }
-  50% {
-    transform: translateX(-12%);
-  }
-  100% {
-    transform: translateX(12%);
-  }
-}
-
-@keyframes fogDrift1 {
-  0% {
-    transform: translateX(-15%);
-    opacity: 0.3;
-  }
-  50% {
-    transform: translateX(15%);
-    opacity: 0.5;
-  }
-  100% {
-    transform: translateX(-15%);
-    opacity: 0.3;
-  }
-}
-
-@keyframes fogDrift2 {
-  0% {
-    transform: translateX(15%);
-    opacity: 0.35;
-  }
-  50% {
-    transform: translateX(-15%);
-    opacity: 0.55;
-  }
-  100% {
-    transform: translateX(15%);
-    opacity: 0.35;
-  }
-}
-
-@keyframes starTwinkle {
-  0%, 100% {
-    opacity: 0.2;
-    transform: scale(0.9);
-  }
-  50% {
-    opacity: 0.9;
-    transform: scale(1.1);
-  }
-}
-
-@keyframes sheetLightning {
-  0%, 94%, 100% {
-    opacity: 0;
-  }
-  95% {
-    opacity: 0.6;
-  }
-  96% {
-    opacity: 0.1;
-  }
-  97% {
-    opacity: 0.75;
-  }
-  98% {
-    opacity: 0;
-  }
-}
-
-.animate-sun-rotate {
-  animation: sunRaysRotate 80s linear infinite;
-}
-
-.animate-sun-pulse {
-  animation: sunPulse 8s ease-in-out infinite;
-}
-
-.animate-heat-haze {
-  animation: heatHazeEffect 5s ease-in-out infinite;
-}
-
-.animate-cloud-slow {
-  animation: cloudDriftSlow 90s ease-in-out infinite;
-}
-
-.animate-cloud-fast {
-  animation: cloudDriftFast 55s ease-in-out infinite;
-}
-
-.animate-fog-1 {
-  animation: fogDrift1 35s ease-in-out infinite;
-}
-
-.animate-fog-2 {
-  animation: fogDrift2 45s ease-in-out infinite;
-}
-
-.animate-lightning {
-  animation: sheetLightning 12s ease-in-out infinite;
-}
-
-/* Accessibility: reduce motion when user system preferences request it */
-@media (prefers-reduced-motion: reduce) {
-  .animate-sun-rotate,
-  .animate-sun-pulse,
-  .animate-heat-haze,
-  .animate-cloud-slow,
-  .animate-cloud-fast,
-  .animate-fog-1,
-  .animate-fog-2,
-  .animate-lightning,
-  .animate-mic-pulse,
-  .animate-subtle-float,
-  .animate-msg-in {
-    animation: none !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-/* Safe area padding utilities */
-.safe-top {
-  padding-top: max(env(safe-area-inset-top, 0px), 0px);
-}
-
-.safe-bottom {
-  padding-bottom: max(env(safe-area-inset-bottom, 0px), 0px);
-}
-
-/* Hide scrollbars completely while preserving smooth touch scrolling */
+/* Scrollbar styling */
 .scrollbar-none::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
@@ -312,5 +96,7 @@
   scrollbar-width: none !important;
 }
 
-html[data-saver="on"] *, html[data-saver="on"] *::before, html[data-saver="on"] *::after { animation: none !important; transition: none !important; }
-html[data-saver="on"] canvas, html[data-saver="on"] .fixed.inset-0.-z-10 { display: none !important; }
+html[data-saver="on"] *, html[data-saver="on"] *::before, html[data-saver="on"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
