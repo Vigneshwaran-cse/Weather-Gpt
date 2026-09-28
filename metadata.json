@@ -1,0 +1,6 @@
+{
+  "name": "WeatherGPT — Conversational Weather AI",
+  "description": "Conversational AI for real-time weather forecasting, severe weather alerts, and climate intelligence powered by Open-Meteo and Google Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
