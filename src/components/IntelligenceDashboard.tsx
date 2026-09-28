@@ -136,8 +136,8 @@ export const IntelligenceDashboard: React.FC<Props> = ({ currentLocation, onSele
     <section aria-label={L.official} className="rounded-xl border border-rose-500/50 bg-rose-950/40 p-3 space-y-1.5">
       {official?.available && official.warnings.length ? official.warnings.map((w, i) => (
         <div key={i} className="text-xs space-y-0.5">
-          <div className="font-extrabold text-rose-200 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />{L.official}{w.level && w.level !== 'UNKNOWN' ? ` — ${w.level}` : ''}</div>
-          <div className="text-slate-300">Source: IMD</div>
+          <div className="font-extrabold text-rose-200 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />{w.source === 'DEMO' ? 'SIMULATED ADVISORY' : L.official}{w.level && w.level !== 'UNKNOWN' ? ` — ${w.level}` : ''}</div>
+          <div className="text-slate-300">Source: {w.source === 'DEMO' ? 'Prototype demo data' : 'IMD'}</div>
           {w.issued && <div className="text-slate-300">Issued: {fmtTime(w.issued)}</div>}
           {(w.validTo || w.validFrom) && <div className="text-slate-300">Valid: {w.validFrom ? fmtTime(w.validFrom) + ' → ' : 'until '}{fmtTime(w.validTo)}</div>}
           <div className="text-slate-100 font-semibold">{w.title}: {w.message}</div>
@@ -173,7 +173,12 @@ export const IntelligenceDashboard: React.FC<Props> = ({ currentLocation, onSele
           <div>{isOffline ? <><b>{L.offline}</b> — {b ? <>Last verified: {fmtTime(b.generatedAt)}. This information may be outdated.</> : 'No saved verified data yet.'}</> : <><b>Weak network</b> — consider Data Saver.</>}</div></div>
       )}
       {b && <div className="flex items-center gap-1.5 text-[10px]"><span className={`px-2 py-0.5 rounded-full font-bold ${STATE_STYLE[dataState(b, online, fromCache)]}`}>{dataState(b, online, fromCache)}</span><span className="text-slate-400">Last verified {fmtTime(b.generatedAt)}</span>{loading && <RefreshCw className="w-3 h-3 animate-spin text-sky-300" />}</div>}
-      {b && b.sources.some((source) => source.name.startsWith('Gemini') && source.status === 'unavailable') && (
+      {b?.demoMode && (
+        <div role="status" className="rounded-lg border border-sky-500/40 bg-sky-950/50 p-2 text-[11px] text-sky-200">
+          Demo Mode is active. Forecast values come from live weather data; advisory and AI explanation states are simulated for this prototype.
+        </div>
+      )}
+      {b && !b.demoMode && b.sources.some((source) => source.name.startsWith('Gemini') && source.status === 'unavailable') && (
         <div role="status" className="rounded-lg border border-amber-500/40 bg-amber-950/40 p-2 text-[11px] text-amber-200">
           Gemini AI is not configured. Showing verified weather data with a local explanation. Add <code className="font-mono">GEMINI_API_KEY</code> to the server environment for AI answers.
         </div>

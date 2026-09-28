@@ -33,3 +33,5 @@ Ask -> location -> forecast (Open-Meteo NWP) + IMD warning -> hazard engine -> G
 
 ### Vercel deployment
 Import this repository into Vercel with `proj` as the project root if the repository root contains this folder. Vercel uses `vercel.json` to build the Vite frontend and route `/api/*` to the Express serverless function. Add `GEMINI_API_KEY`, `IMD_API_KEY`, and (when overriding the verified defaults) `IMD_DISTRICT_MAP` as Vercel Environment Variables for Preview and Production. Never put these secrets in `VITE_*` variables.
+
+For a presentation-only deployment without provider credentials, set `DEMO_MODE="true"` (this is also the default when the variable is absent). This uses live forecast data but visibly labels simulated advisory and AI states. Set it to `false` when real IMD/Gemini credentials are available.

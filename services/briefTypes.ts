@@ -18,7 +18,7 @@ export interface HazardResult {
 }
 
 export interface OfficialWarning {
-  source: 'IMD';
+  source: 'IMD' | 'DEMO';
   title: string;
   level?: 'GREEN' | 'YELLOW' | 'ORANGE' | 'RED' | 'UNKNOWN';
   issued?: string;
@@ -65,6 +65,7 @@ export interface WeatherIntelligenceBrief {
   generatedAt: string;
   status: 'LIVE' | 'PARTIAL' | 'UNAVAILABLE';
   disasterMode: boolean;
+  demoMode?: boolean;
   question?: string;
   summary: {
     headline: string;

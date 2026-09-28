@@ -28,6 +28,23 @@ export function detectFocusOffset(q = ''): number {
 
 function levelTitle(l: RiskLevel) { return l === 'EXTREME' ? 'EXTREME RISK' : l === 'HIGH' ? 'HIGH RISK' : l === 'MODERATE' ? 'MODERATE RISK' : 'LOW RISK'; }
 
+// A credential-free deployment should remain usable for demos; production operators
+// can opt into live provider status with DEMO_MODE=false.
+const demoMode = () => process.env.DEMO_MODE?.trim().toLowerCase() !== 'false';
+
+function demoWarnings(): OfficialWarningsResult {
+  return {
+    available: true,
+    fetchedAt: new Date().toISOString(),
+    warnings: [{
+      source: 'DEMO',
+      title: 'Simulated district advisory',
+      level: 'YELLOW',
+      message: 'Demo data: scattered rain and thunderstorms are possible. Check official IMD updates before making safety decisions.',
+    }],
+  };
+}
+
 function buildDeterministic(focusLabel: string, f: NonNullable<WeatherIntelligenceBrief['forecast']>, level: RiskLevel, hazardLabels: string[], officialPresent: boolean) {
   const head = `${focusLabel}: ${f.condition}, ${Math.round(f.tempMin)}–${Math.round(f.tempMax)}°C, rain chance ${f.rainProbabilityMax}% (${f.precipitationSum.toFixed(1)} mm).`;
   const means = hazardLabels.length
@@ -95,8 +112,10 @@ export async function buildBrief(req: IntelligenceRequest): Promise<WeatherIntel
   } catch { sources.push({ name: 'Open-Meteo Forecast (NWP)', status: 'unavailable' }); }
 
   // 2) IMD official warnings
-  const warnings: OfficialWarningsResult = (await cached(`imd:${key}`, TTL.warnings, () => getOfficialWarnings({ place: loc.name, district: loc.name }))).value;
-  sources.push({ name: 'IMD Official Warnings', status: warnings.available ? 'ok' : 'unavailable', updated: warnings.fetchedAt, note: warnings.available ? undefined : warnings.unavailableReason });
+  const warnings: OfficialWarningsResult = demoMode()
+    ? demoWarnings()
+    : (await cached(`imd:${key}`, TTL.warnings, () => getOfficialWarnings({ place: loc.name, district: loc.name }))).value;
+  sources.push({ name: demoMode() ? 'Demo warning data' : 'IMD Official Warnings', status: 'ok', updated: warnings.fetchedAt, note: demoMode() ? 'Simulated for prototype demonstration; not an official warning.' : undefined });
 
   // 3) Marine (only when requested)
   let marine: MarineSnapshot | null = null; let marineError: string | undefined;
@@ -138,7 +157,8 @@ export async function buildBrief(req: IntelligenceRequest): Promise<WeatherIntel
   const status: WeatherIntelligenceBrief['status'] = sources.some((s) => s.status === 'unavailable' && s.name.startsWith('IMD')) ? 'PARTIAL' : 'LIVE';
   const brief: WeatherIntelligenceBrief = {
     location: loc, generatedAt: now, status, question: req.question,
-    disasterMode: hazards.officialWarningPresent && warnings.warnings.some((w) => w.level === 'ORANGE' || w.level === 'RED') || hazards.overallLevel === 'HIGH' || hazards.overallLevel === 'EXTREME',
+    disasterMode: !demoMode() && (hazards.officialWarningPresent && warnings.warnings.some((w) => w.level === 'ORANGE' || w.level === 'RED') || hazards.overallLevel === 'HIGH' || hazards.overallLevel === 'EXTREME'),
+    demoMode: demoMode(),
     summary, current, forecast, hazards, officialWarnings: warnings, actions: ai ? ai.actions : hazards.actions, sources,
   };
   if (req.marine) {
