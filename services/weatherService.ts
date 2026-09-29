@@ -390,15 +390,40 @@ export async function getVerifiedWeatherData(
     throw new Error('Critical current weather fields are missing or non-numeric.');
   }
 
-  // Find rain probability and soil temperature for the current hour
+  // Find rain probability and soil temperature for the current local hour at the requested location.
+  // Open-Meteo returns hourly times in the location's local timezone (timezone=auto), so we must
+  // compare against local time at that location, not UTC. We derive the local time from the
+  // UTC offset embedded in Open-Meteo's utc_offset_seconds field.
   const now = new Date();
-  const currentIsoPrefix = now.toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
+  const utcOffsetSeconds: number = typeof raw.utc_offset_seconds === 'number' ? raw.utc_offset_seconds : 0;
+  // Shift now by the location's UTC offset to get local "wall clock" time
+  const localNowMs = now.getTime() + utcOffsetSeconds * 1000;
+  const localNow = new Date(localNowMs);
+  // Build "YYYY-MM-DDTHH" prefix in LOCAL time at the location
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const localIsoPrefix =
+    `${localNow.getUTCFullYear()}-${pad2(localNow.getUTCMonth() + 1)}-${pad2(localNow.getUTCDate())}T${pad2(localNow.getUTCHours())}`;
+
   let currentRainProb = 0;
   let currentSoilTemp: number | undefined = undefined;
   if (Array.isArray(hourlyRaw.time) && Array.isArray(hourlyRaw.precipitation_probability)) {
-    const idx = hourlyRaw.time.findIndex((t: string) => t.startsWith(currentIsoPrefix));
-    if (idx !== -1 && typeof hourlyRaw.precipitation_probability[idx] === 'number') {
-      currentRainProb = hourlyRaw.precipitation_probability[idx];
+    // Match against local time prefix ("YYYY-MM-DDTHH")
+    let idx = hourlyRaw.time.findIndex((t: string) => t.startsWith(localIsoPrefix));
+    // If no exact match (e.g. slight mismatch), find the closest past hour
+    if (idx === -1) {
+      idx = hourlyRaw.time.reduce((best: number, t: string, i: number) => {
+        const diff = localNowMs - new Date(t).getTime();
+        if (diff >= 0) {
+          const bestDiff = best === -1 ? Infinity : localNowMs - new Date(hourlyRaw.time[best]).getTime();
+          return diff < bestDiff ? i : best;
+        }
+        return best;
+      }, -1);
+    }
+    if (idx !== -1 && idx < hourlyRaw.precipitation_probability.length) {
+      if (typeof hourlyRaw.precipitation_probability[idx] === 'number') {
+        currentRainProb = hourlyRaw.precipitation_probability[idx];
+      }
       if (Array.isArray(hourlyRaw.soil_temperature_0cm) && typeof hourlyRaw.soil_temperature_0cm[idx] === 'number') {
         currentSoilTemp = Math.round(hourlyRaw.soil_temperature_0cm[idx] * 10) / 10;
       }

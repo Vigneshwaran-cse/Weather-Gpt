@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ArrowLeft,
   Plane,
-  Compass,
   Wind,
   Gauge,
   Cloud,
@@ -10,6 +9,7 @@ import {
   Sparkles,
   CheckCircle2,
   AlertTriangle,
+  Loader2,
 } from 'lucide-react';
 import { OccupationDashboardProps } from './types';
 import { useLanguage } from '../../i18n/LanguageContext';
@@ -21,45 +21,94 @@ export const AviationDashboard: React.FC<OccupationDashboardProps> = ({
   onChangeMode,
   onOpenChatWithPrompt,
 }) => {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const [aiQuestion, setAiQuestion] = useState('');
+  const [aiAnswer, setAiAnswer] = useState<string | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
+
   const current = weatherData?.current;
-  const windKmh = current ? Math.round(current.windSpeed) : 15;
-  const windKnots = Math.round(windKmh * 0.539957);
-  const windDirection = current ? current.windDirection : 240;
-  const temp = current ? Math.round(current.temperature) : 22;
-  const dewPoint = Math.round(temp - ((100 - (current?.humidity ?? 60)) / 5));
-  const rainProb = current ? current.rainProbability : 10;
+  const windKmh = current ? Math.round(current.windSpeed) : null;
+  const windKnots = windKmh !== null ? Math.round(windKmh * 0.539957) : null;
+  const windDirection = current ? current.windDirection : null;
+  const temp = current ? Math.round(current.temperature) : null;
+  const humidity = current ? current.humidity : null;
+  const rainProb = current ? current.rainProbability : 0;
+  const visibility = current?.visibility; // km from Open-Meteo
+  const weatherCode = current?.weatherCode ?? 0;
 
-  // Flight Category determination: VFR / MVFR / IFR
-  let flightCategory = 'VFR';
-  let flightCategoryColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
-  let flightCategoryDesc = t('flightCategoryVFR');
+  // Dew point estimation from temp & humidity (Magnus formula approximation)
+  const dewPoint =
+    temp !== null && humidity !== null
+      ? Math.round(temp - (100 - humidity) / 5)
+      : null;
 
-  if (rainProb > 70 || (current?.weatherCode && current.weatherCode >= 61 && current.weatherCode <= 67)) {
-    flightCategory = 'IFR';
-    flightCategoryColor = 'text-rose-400 bg-rose-500/10 border-rose-500/30';
-    flightCategoryDesc = t('flightCategoryIFR');
-  } else if (rainProb > 40 || windKnots > 22) {
-    flightCategory = 'MVFR';
-    flightCategoryColor = 'text-amber-400 bg-amber-500/10 border-amber-500/30';
-    flightCategoryDesc = t('aviationHighlights');
+  // Flight Category: derived from real visibility and weather code (no fabrication)
+  // VFR: visibility >5km, no significant precipitation
+  // MVFR: visibility 3-5km or moderate rain
+  // IFR: visibility <3km or heavy rain/thunderstorm
+  let flightCategory = 'UNKNOWN';
+  let flightCategoryColor = 'text-slate-400 bg-slate-800/50 border-slate-600/30';
+  let flightCategoryDesc = 'Insufficient data for flight category assessment';
+
+  if (current) {
+    const hasThunder = [95, 96, 99].includes(weatherCode);
+    const hasHeavyRain = [65, 67, 82].includes(weatherCode);
+    const hasRain = rainProb > 60 || [61, 63, 65, 80, 81, 82].includes(weatherCode);
+    const visKm = visibility;
+
+    if (hasThunder || hasHeavyRain || (visKm !== undefined && visKm < 1.6)) {
+      flightCategory = 'IFR';
+      flightCategoryColor = 'text-rose-400 bg-rose-500/10 border-rose-500/30';
+      flightCategoryDesc = 'Instrument Flight Rules — Low visibility or severe weather. Contact ATC and check NOTAMs.';
+    } else if (hasRain || (windKnots !== null && windKnots > 25) || (visKm !== undefined && visKm < 5)) {
+      flightCategory = 'MVFR';
+      flightCategoryColor = 'text-amber-400 bg-amber-500/10 border-amber-500/30';
+      flightCategoryDesc = 'Marginal VFR — Exercise caution. Check official weather briefing.';
+    } else {
+      flightCategory = 'VFR';
+      flightCategoryColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30';
+      flightCategoryDesc = 'Visual Flight Rules conditions. Verify with official pre-flight briefing.';
+    }
   }
 
-  // Estimated Altimeter QNH
-  const qnhHpa = 1013;
-  const qnhInHg = (qnhHpa * 0.02953).toFixed(2);
+  // Density altitude deviation (approximate: +118 ft per °C above ISA 15°C)
+  const isaDeviation = temp !== null ? temp - 15 : null;
+  const densityAltitudeOffset = isaDeviation !== null ? Math.round(isaDeviation * 120) : null;
 
-  // Density altitude deviation (approx +118 ft per °C above ISA 15°C)
-  const isaDeviation = temp - 15;
-  const densityAltitudeOffset = Math.round(isaDeviation * 120);
+  const handleAskAI = async (question: string) => {
+    if (!question.trim()) return;
+    setAiLoading(true);
+    setAiAnswer(null);
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: question,
+          location: currentLocation.name,
+          language,
+          coords: {
+            lat: currentLocation.latitude,
+            lon: currentLocation.longitude,
+            state: currentLocation.state,
+            country: currentLocation.country,
+          },
+        }),
+      });
+      const data = await res.json();
+      setAiAnswer(data.reply || 'No response received.');
+    } catch {
+      setAiAnswer('Unable to connect to AI. Please try again.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
-  // Synthetic METAR generation for pilot briefing
-  const icaoCode = currentLocation.name.slice(0, 3).toUpperCase() + 'X';
-  const metarTime = '251800Z';
-  const windCode = `${String(windDirection).padStart(3, '0')}${String(windKnots).padStart(2, '0')}KT`;
-  const skyCondition = rainProb > 50 ? 'BKN035' : rainProb > 25 ? 'SCT045' : 'FEW050';
-  const tempDewCode = `${temp >= 0 ? String(temp).padStart(2, '0') : 'M' + Math.abs(temp)}/${dewPoint >= 0 ? String(dewPoint).padStart(2, '0') : 'M' + Math.abs(dewPoint)}`;
-  const syntheticMetar = `${icaoCode} ${metarTime} ${windCode} 9999 ${skyCondition} ${tempDewCode} Q${qnhHpa} NOSIG`;
+  const getCardinal = (angle: number | null) => {
+    if (angle === null) return '—';
+    const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    return directions[Math.round(angle / 45) % 8];
+  };
 
   return (
     <div className="flex-1 min-h-0 w-full flex flex-col overflow-y-auto scrollbar-none space-y-3 p-0.5">
@@ -74,7 +123,6 @@ export const AviationDashboard: React.FC<OccupationDashboardProps> = ({
           <span>{t('changeMode')}</span>
         </button>
 
-        {/* Quick Mode Switcher */}
         <div className="flex items-center gap-1 text-[11px]">
           <span className="text-slate-500 hidden sm:inline">{t('activeModeLabel')}:</span>
           <button
@@ -109,149 +157,159 @@ export const AviationDashboard: React.FC<OccupationDashboardProps> = ({
               <span className="text-[10px] font-semibold text-indigo-400">· {currentLocation.name}</span>
             </h2>
             <p className="text-[11px] text-slate-400 truncate">
-              {t('aviationDesc')}
+              Real Open-Meteo weather data · For planning reference only — always verify with official ATC/met briefing
             </p>
           </div>
         </div>
 
         {/* Flight Category Banner */}
-        <div className={`mt-2.5 p-2.5 rounded-xl border flex items-center justify-between gap-2 ${flightCategoryColor}`}>
-          <div className="flex items-center gap-2">
-            {flightCategory === 'VFR' ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            ) : (
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-            )}
-            <div>
-              <div className="text-xs font-bold flex items-center gap-2">
-                <span>{t('aviationFlightConditions')}: {flightCategory}</span>
-              </div>
-              <div className="text-[10px] text-slate-300">
-                {flightCategoryDesc}
+        {current ? (
+          <div className={`mt-2.5 p-2.5 rounded-xl border flex items-center justify-between gap-2 ${flightCategoryColor}`}>
+            <div className="flex items-center gap-2">
+              {flightCategory === 'VFR' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+              )}
+              <div>
+                <div className="text-xs font-bold">
+                  Flight Category: {flightCategory} — {current.condition}
+                </div>
+                <div className="text-[10px] text-slate-300">{flightCategoryDesc}</div>
               </div>
             </div>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
-            ICAO {icaoCode}
-          </span>
-        </div>
+        ) : (
+          <div className="mt-2.5 p-2.5 rounded-xl border border-slate-700 text-slate-400 text-xs">
+            Weather data loading…
+          </div>
+        )}
       </div>
 
-      {/* Synthetic METAR Card */}
-      <div className="p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 shrink-0">
-        <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
-          <span className="font-semibold text-slate-300">{t('empiricalTelemetry')}</span>
-          <span className="font-mono text-[10px] text-indigo-400">{t('live')}</span>
-        </div>
-        <div className="font-mono text-xs text-indigo-300 bg-slate-950/70 p-2 rounded-lg border border-slate-800/80 tracking-wide break-all">
-          {syntheticMetar}
-        </div>
+      {/* Disclaimer — no synthetic METAR */}
+      <div className="p-2.5 rounded-xl bg-amber-950/20 border border-amber-500/20 text-[11px] text-amber-300">
+        ⚠️ <strong>Official METAR/ATIS not available.</strong> The data below is from Open-Meteo NWP models.
+        Always obtain official METAR, TAF, SIGMET and NOTAM from your national aviation authority before flight.
       </div>
 
-      {/* Aviation Telemetry Grid */}
+      {/* Aviation Telemetry Grid — Real Data */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 shrink-0">
-        {/* Surface Winds */}
+        {/* Surface Wind */}
         <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="flex items-center gap-1.5 text-[11px] text-indigo-400 font-semibold mb-1">
             <Wind className="w-3.5 h-3.5" />
-            <span>{t('wind')}</span>
+            <span>Surface Wind</span>
           </div>
           <div className="text-base font-bold text-white tabular-nums">
-            {windDirection}° / {windKnots} kts
+            {windKnots !== null ? `${windKnots} kts ${getCardinal(windDirection)}` : 'UNAVAILABLE'}
           </div>
           <p className="text-[10px] text-slate-400 mt-0.5">
-            {t('windSpeed')}: {windKmh} km/h
+            {windKmh !== null ? `${windKmh} km/h · ${windDirection}°` : '—'}
           </p>
         </div>
 
-        {/* Altimeter QNH */}
+        {/* Visibility */}
         <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="flex items-center gap-1.5 text-[11px] text-indigo-400 font-semibold mb-1">
             <Gauge className="w-3.5 h-3.5" />
-            <span>{t('barometricPressure')}</span>
+            <span>Visibility</span>
           </div>
           <div className="text-base font-bold text-white tabular-nums">
-            {qnhHpa} hPa
+            {visibility !== undefined ? `${visibility} km` : 'UNAVAILABLE'}
           </div>
-          <p className="text-[10px] text-slate-400 mt-0.5">
-            {t('pressure')}
-          </p>
+          <p className="text-[10px] text-slate-400 mt-0.5">Horizontal visibility</p>
         </div>
 
-        {/* Cloud Ceiling */}
+        {/* Temperature / Dew Point */}
         <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="flex items-center gap-1.5 text-[11px] text-indigo-400 font-semibold mb-1">
             <Cloud className="w-3.5 h-3.5" />
-            <span>{t('cloudCeiling')}</span>
+            <span>Temp / Dew</span>
           </div>
           <div className="text-base font-bold text-white tabular-nums">
-            {rainProb > 40 ? '3,500 ft AGL' : '> 5,000 ft'}
+            {temp !== null ? `${temp}°C` : 'UNAVAILABLE'}
           </div>
           <p className="text-[10px] text-slate-400 mt-0.5">
-            {skyCondition}
+            Dew: {dewPoint !== null ? `${dewPoint}°C` : '—'} · RH: {humidity ?? '—'}%
           </p>
         </div>
 
         {/* Density Altitude Offset */}
         <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
           <div className="flex items-center gap-1.5 text-[11px] text-indigo-400 font-semibold mb-1">
-            <Compass className="w-3.5 h-3.5" />
-            <span>{t('crosswindRisk')}</span>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>ISA Deviation</span>
           </div>
           <div className="text-base font-bold text-white tabular-nums">
-            {densityAltitudeOffset >= 0 ? `+${densityAltitudeOffset}` : densityAltitudeOffset} ft
+            {densityAltitudeOffset !== null
+              ? `${densityAltitudeOffset >= 0 ? '+' : ''}${densityAltitudeOffset} ft`
+              : 'UNAVAILABLE'}
           </div>
           <p className="text-[10px] text-slate-400 mt-0.5">
-            {windKnots > 20 ? t('crosswindHigh') : t('crosswindNormal')}
+            ISA dev: {isaDeviation !== null ? `${isaDeviation >= 0 ? '+' : ''}${isaDeviation}°C` : '—'}
           </p>
         </div>
       </div>
 
-      {/* Turbulence & Shear Advisory */}
-      <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 shrink-0">
-        <div className="flex items-center justify-between text-xs font-semibold text-white mb-1.5">
-          <span className="flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-indigo-400" />
-            {t('aviationFlightConditions')}
-          </span>
-          <span className="text-[11px] text-indigo-400 font-bold">
-            {windKnots < 18 ? t('routeClearTitle') : t('routeCautionTitle')}
-          </span>
-        </div>
-        <p className="text-[11px] text-slate-300 leading-relaxed">
-          {t('aviationDesc')} · {currentLocation.name}
-        </p>
-      </div>
-
-      {/* Quick AI Prompts for Aviators */}
+      {/* AI Chat for Aviation Questions */}
       <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 shrink-0">
         <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-300 mb-2">
           <Sparkles className="w-4 h-4" />
-          <span>{t('askAiAdvisor')}</span>
+          <span>Ask AI About Aviation Weather</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
+          {[
+            `What are the wind and visibility conditions for flying near ${currentLocation.name}?`,
+            `Is there any thunderstorm or severe weather risk near ${currentLocation.name} today?`,
+            `What is the cloud cover and precipitation forecast for ${currentLocation.name}?`,
+          ].map((prompt, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => handleAskAI(prompt)}
+              className="p-2 rounded-lg bg-slate-800/80 hover:bg-indigo-950/40 border border-slate-700 hover:border-indigo-500/40 text-left text-[11px] text-slate-300 hover:text-indigo-300 transition-colors cursor-pointer"
+            >
+              "{prompt}"
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={aiQuestion}
+            onChange={(e) => setAiQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAskAI(aiQuestion)}
+            placeholder="Ask an aviation weather question…"
+            className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500"
+          />
           <button
             type="button"
-            onClick={() => onOpenChatWithPrompt?.(t('askAiAviationPrompt'))}
-            className="p-2.5 rounded-lg bg-slate-800/80 hover:bg-indigo-950/40 border border-slate-700 hover:border-indigo-500/40 text-left text-[11px] text-slate-200 hover:text-indigo-300 transition-colors cursor-pointer"
+            onClick={() => handleAskAI(aiQuestion)}
+            disabled={aiLoading || !aiQuestion.trim()}
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
           >
-            "{t('askAiAviationPrompt')}"
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenChatWithPrompt?.(`${t('aviation')}: ${currentLocation.name}`)}
-            className="p-2.5 rounded-lg bg-slate-800/80 hover:bg-indigo-950/40 border border-slate-700 hover:border-indigo-500/40 text-left text-[11px] text-slate-200 hover:text-indigo-300 transition-colors cursor-pointer"
-          >
-            "{t('aviation')}: {currentLocation.name}"
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenChatWithPrompt?.(`${t('cloudCeiling')} & ${t('visibilityLabel')}: ${currentLocation.name}`)}
-            className="p-2.5 rounded-lg bg-slate-800/80 hover:bg-indigo-950/40 border border-slate-700 hover:border-indigo-500/40 text-left text-[11px] text-slate-200 hover:text-indigo-300 transition-colors cursor-pointer"
-          >
-            "{t('cloudCeiling')} & {t('visibilityLabel')}: ${currentLocation.name}"
+            {aiLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Ask'}
           </button>
         </div>
+
+        {(aiLoading || aiAnswer) && (
+          <div className="mt-3 p-3 rounded-lg bg-indigo-950/30 border border-indigo-500/20">
+            {aiLoading ? (
+              <div className="flex items-center gap-2 text-xs text-indigo-300">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>Generating aviation weather analysis…</span>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-line">{aiAnswer}</p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="text-[10px] text-slate-500 text-center pb-1">
+        Data: Open-Meteo Forecast API · AI: Gemini (grounded on verified data) · Not for official navigation use
       </div>
     </div>
   );

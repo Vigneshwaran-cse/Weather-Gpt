@@ -18,6 +18,7 @@ export interface CurrentWeather {
   condition: string;
   isDay: boolean;
   timestamp: string;
+  visibility?: number;
   uvIndex?: number;
   soilTemperature?: number;
 }
