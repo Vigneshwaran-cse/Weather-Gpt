@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @font-face {
   font-family: 'Chillax';
   src: url('https://cdn.fontshare.com/wf/L2EODQYZXW7Q4O2G7EEDZ3U3R425624L/GXZJAY6NIV6P4R4EGF2ZJ5Q3A7P37A6J/JCSLMS3W5K7XQ4D2P4V4CWRM3Z4TXB6D.woff2') format('woff2');
