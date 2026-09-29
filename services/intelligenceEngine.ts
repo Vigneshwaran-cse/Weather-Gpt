@@ -28,23 +28,6 @@ export function detectFocusOffset(q = ''): number {
 
 function levelTitle(l: RiskLevel) { return l === 'EXTREME' ? 'EXTREME RISK' : l === 'HIGH' ? 'HIGH RISK' : l === 'MODERATE' ? 'MODERATE RISK' : 'LOW RISK'; }
 
-// A credential-free deployment should remain usable for demos; production operators
-// can opt into live provider status with DEMO_MODE=false.
-const demoMode = () => process.env.DEMO_MODE?.trim().toLowerCase() !== 'false';
-
-function demoWarnings(): OfficialWarningsResult {
-  return {
-    available: true,
-    fetchedAt: new Date().toISOString(),
-    warnings: [{
-      source: 'DEMO',
-      title: 'Simulated district advisory',
-      level: 'YELLOW',
-      message: 'Demo data: scattered rain and thunderstorms are possible. Check official IMD updates before making safety decisions.',
-    }],
-  };
-}
-
 function buildDeterministic(focusLabel: string, f: NonNullable<WeatherIntelligenceBrief['forecast']>, level: RiskLevel, hazardLabels: string[], officialPresent: boolean) {
   const head = `${focusLabel}: ${f.condition}, ${Math.round(f.tempMin)}–${Math.round(f.tempMax)}°C, rain chance ${f.rainProbabilityMax}% (${f.precipitationSum.toFixed(1)} mm).`;
   const means = hazardLabels.length
@@ -58,7 +41,7 @@ async function explainWithGemini(ctx: unknown, question: string, language: strin
   if (!ai) return null;
   try {
     const resp = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       contents: `VERIFIED CONTEXT (JSON, the ONLY source of numbers):\n${JSON.stringify(ctx)}\n\nUSER QUESTION: ${question || 'What is happening around me and what should I do?'}`,
       config: {
         systemInstruction: `You are WeatherGPT's explainer. Answer ONLY from the verified context. NEVER invent or alter any weather number, warning, or date; if data is missing say it is unavailable. Do not merge or rewrite official IMD warning text; refer to it as "the official IMD warning". Never say it is "safe to sail". Keep it simple, 1-2 sentences for summary and whatItMeans, 3-5 short actions (you may rephrase the provided baseline actions). Write in ${LANGS[language] || 'English'}. Baseline actions: ${JSON.stringify(actionsIn)}`,
@@ -112,10 +95,13 @@ export async function buildBrief(req: IntelligenceRequest): Promise<WeatherIntel
   } catch { sources.push({ name: 'Open-Meteo Forecast (NWP)', status: 'unavailable' }); }
 
   // 2) IMD official warnings
-  const warnings: OfficialWarningsResult = demoMode()
-    ? demoWarnings()
-    : (await cached(`imd:${key}`, TTL.warnings, () => getOfficialWarnings({ place: loc.name, district: loc.name }))).value;
-  sources.push({ name: demoMode() ? 'Demo warning data' : 'IMD Official Warnings', status: 'ok', updated: warnings.fetchedAt, note: demoMode() ? 'Simulated for prototype demonstration; not an official warning.' : undefined });
+  let warnings: OfficialWarningsResult = { available: false, warnings: [], fetchedAt: now };
+  try {
+    warnings = (await cached(`imd:${key}`, TTL.warnings, () => getOfficialWarnings({ place: loc.name, district: loc.name }))).value;
+    sources.push({ name: 'IMD Official Warnings', status: warnings.available ? 'ok' : 'unavailable', updated: warnings.fetchedAt });
+  } catch {
+    sources.push({ name: 'IMD Official Warnings', status: 'unavailable' });
+  }
 
   // 3) Marine (only when requested)
   let marine: MarineSnapshot | null = null; let marineError: string | undefined;
@@ -157,8 +143,7 @@ export async function buildBrief(req: IntelligenceRequest): Promise<WeatherIntel
   const status: WeatherIntelligenceBrief['status'] = sources.some((s) => s.status === 'unavailable' && s.name.startsWith('IMD')) ? 'PARTIAL' : 'LIVE';
   const brief: WeatherIntelligenceBrief = {
     location: loc, generatedAt: now, status, question: req.question,
-    disasterMode: !demoMode() && (hazards.officialWarningPresent && warnings.warnings.some((w) => w.level === 'ORANGE' || w.level === 'RED') || hazards.overallLevel === 'HIGH' || hazards.overallLevel === 'EXTREME'),
-    demoMode: demoMode(),
+    disasterMode: hazards.officialWarningPresent && warnings.warnings.some((w) => w.level === 'ORANGE' || w.level === 'RED') || hazards.overallLevel === 'HIGH' || hazards.overallLevel === 'EXTREME',
     summary, current, forecast, hazards, officialWarnings: warnings, actions: ai ? ai.actions : hazards.actions, sources,
   };
   if (req.marine) {

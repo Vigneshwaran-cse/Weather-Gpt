@@ -87,11 +87,6 @@ export const TopHeaderBar: React.FC<TopHeaderBarProps> = ({
             <Sun className="w-4 h-4 text-amber-400" />
           )}
         </button>
-
-        {/* User Profile Circle Avatar */}
-        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-sky-500 text-white font-bold text-xs flex items-center justify-center shadow-xs select-none">
-          E
-        </div>
       </div>
     </header>
   );

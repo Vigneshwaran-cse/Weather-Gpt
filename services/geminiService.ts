@@ -210,7 +210,7 @@ Extract the following JSON fields:
 13. "isDeviceLocationQuery": Boolean, true if user asks "near me", "my location", "here"`;
 
     const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -746,7 +746,7 @@ Follow the 10-step decision-support principles:
    - Do NOT dump raw metric tables ("Temperature: 29°C, Humidity: 82%"). Embed numbers naturally into flowing sentences.`;
 
     const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
@@ -756,13 +756,13 @@ Follow the 10-step decision-support principles:
 
     const reply = response.text?.trim();
     if (!reply) {
-      return generateDeterministicFallbackResponse(userQuery, weather, intent, language, metrics);
+      return generateDeterministicFallbackResponse(userQuery, weather, intent, language, metrics, cropContext, isFarmerMode);
     }
 
     return sanitizeConversationalResponse(reply);
   } catch (error) {
     console.error('Gemini explanation generation error:', error);
-    return generateDeterministicFallbackResponse(userQuery, weather, intent, language, metrics);
+    return generateDeterministicFallbackResponse(userQuery, weather, intent, language, metrics, cropContext, isFarmerMode);
   }
 }
 
@@ -791,8 +791,20 @@ export function generateDeterministicFallbackResponse(
   const activityName = intent.activity || (isTravel ? 'Travel' : 'outdoor activities');
   const isUmbrella = intent.focusMetric === 'umbrella' || /umbrella/i.test(_userQuery);
   const isSourceQuery = /\b(?:model|data source|forecast model|nwp|gfs|ecmwf|wrf|where.*(?:forecast|data)|how.*weather.*calculated)\b/i.test(_userQuery);
+  const isGreetingOrIntro = /\b(?:introduce|who are you|what are you|what can you do|about you|hello|hi\b|hey\b|vanakkam|namaste|greetings)\b/i.test(_userQuery);
 
-  // 0. Handle questions about the weather data source / forecast model
+  // 0. Handle greetings & self-introductions
+  if (isGreetingOrIntro) {
+    if (lang === 'ta') {
+      return `👋 வணக்கம்! நான் WeatherGPT, உங்கள் நிகழ்நேர வானிலை முடிவெடுக்கும் AI உதவியாளர். ${locName} பகுதிக்கான தற்போதைய வானிலை ${weather.current.temperature}°C, ${weather.current.condition} மற்றும் ${weather.current.rainProbability}% மழை வாய்ப்பு உள்ளது. மழை, பயணப் பாதைகள், விவசாயம் அல்லது வெளிப்புறத் திட்டங்கள் குறித்த உங்கள் கேள்விகளைக் கேட்கலாம்.`;
+    }
+    if (lang === 'hi') {
+      return `👋 नमस्ते! मैं WeatherGPT हूँ, आपका मौसम निर्णय-समर्थन AI सहायक। ${locName} में वर्तमान तापमान ${weather.current.temperature}°C (${weather.current.condition}) और बारिश की संभावना ${weather.current.rainProbability}% है। आप मुझसे बारिश, यात्रा, खेती या आउटडोर योजनाओं के बारे में कोई भी प्रश्न पूछ सकते हैं।`;
+    }
+    return `👋 Hello! I am WeatherGPT, your conversational weather decision-support assistant. Currently in ${locName}, it is ${weather.current.temperature}°C with ${weather.current.condition.toLowerCase()} and a ${weather.current.rainProbability}% chance of rain. You can ask me about upcoming rainfall, travel feasibility, farming guidance, or severe weather conditions. How can I help you today?`;
+  }
+
+  // 0.5. Handle questions about the weather data source / forecast model
   if (isSourceQuery) {
     const modelName = weather.forecastModel || 'ECMWF IFS / NOAA GFS (Open-Meteo Blend)';
     if (lang === 'hi') {
@@ -804,8 +816,10 @@ export function generateDeterministicFallbackResponse(
     return `📊 This forecast is generated using verified Numerical Weather Prediction (NWP) model data retrieved from Open-Meteo, which ingests and computes operational forecasts from ECMWF IFS (European Centre for Medium-Range Weather Forecasts) and NOAA GFS (Global Forecast System).\n\n- Data Source: Open-Meteo Weather API\n- Forecast Model: ${modelName}\n- Grid Elevation: ${weather.elevation ? `${weather.elevation}m` : 'Surface level'}\n- Ingestion Time: ${weather.generationTimeMs ? `${weather.generationTimeMs}ms` : 'Operational run'}\n- Last Updated: ${weather.updated}`;
   }
 
-  // 1. Check severe alerts first (Step 6 of Pipeline)
-  if (metrics.activeAlerts.length > 0) {
+  // 1. Check severe alerts (only when explicitly asked or if severe storm/cyclone risk is active)
+  const isAlertQuery = intent.focusMetric === 'alerts' || /\b(?:alert|warning|threat|danger|cyclone|flood|storm)\b/i.test(_userQuery);
+  const hasSevereAlert = metrics.activeAlerts.some((a) => a.severity === 'Severe');
+  if ((isAlertQuery || hasSevereAlert) && metrics.activeAlerts.length > 0) {
     const alert = metrics.activeAlerts[0];
     if (lang === 'hi') {
       return `⚠️ आधिकारिक चेतावनी: ${locName} के लिए ${alert.type} (${alert.severity}) जारी की गई है।\n\n${alert.description}\n\nसुरक्षा सलाह: अनावश्यक यात्रा से बचें, खुले मैदानों से दूर रहें और मौसम सामान्य होने तक सुरक्षित स्थान पर रहें। (स्रोत: ${alert.source})`;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   ArrowLeft,
   Plane,
@@ -10,9 +10,13 @@ import {
   CheckCircle2,
   AlertTriangle,
   Loader2,
+  Mic,
+  MicOff,
 } from 'lucide-react';
 import { OccupationDashboardProps } from './types';
 import { useLanguage } from '../../i18n/LanguageContext';
+import { SPEECH_LANG } from '../../i18n/briefLabels';
+import { transcribeAudioApi } from '../../services/api';
 
 export const AviationDashboard: React.FC<OccupationDashboardProps> = ({
   currentLocation,
@@ -25,6 +29,71 @@ export const AviationDashboard: React.FC<OccupationDashboardProps> = ({
   const [aiQuestion, setAiQuestion] = useState('');
   const [aiAnswer, setAiAnswer] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+
+  // Voice Assistant with Web Speech API and Gemini audio transcription fallback
+  const handleStartVoice = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SR) {
+      const r = new SR();
+      r.lang = SPEECH_LANG[language] || 'en-IN';
+      r.interimResults = false;
+      r.maxAlternatives = 1;
+      r.onresult = (ev: any) => {
+        const text = ev.results[0][0].transcript;
+        if (text?.trim()) {
+          setAiQuestion(text.trim());
+          handleAskAI(text.trim());
+        }
+      };
+      r.onerror = () => setIsRecording(false);
+      r.onend = () => setIsRecording(false);
+      setIsRecording(true);
+      r.start();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      const mr = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mr;
+      mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(',')[1];
+          try {
+            const transcript = await transcribeAudioApi(base64, mimeType, language);
+            if (transcript?.trim()) {
+              setAiQuestion(transcript.trim());
+              handleAskAI(transcript.trim());
+            } else {
+              alert('Could not transcribe voice. Please type your query.');
+            }
+          } catch {
+            alert('Voice transcription failed. Please type your query.');
+          }
+        };
+        reader.readAsDataURL(blob);
+        setIsRecording(false);
+      };
+      mr.start();
+      setIsRecording(true);
+      setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 8000);
+    } catch {
+      alert('Microphone access denied. Please allow microphone permissions and try again.');
+    }
+  };
 
   const current = weatherData?.current;
   const windKmh = current ? Math.round(current.windSpeed) : null;
@@ -276,12 +345,24 @@ export const AviationDashboard: React.FC<OccupationDashboardProps> = ({
         </div>
 
         <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleStartVoice}
+            className={`px-2.5 py-1.5 rounded-lg flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isRecording
+                ? 'bg-rose-600 text-white animate-pulse shadow-md shadow-rose-600/50'
+                : 'bg-slate-800 border border-slate-700 text-indigo-400 hover:bg-slate-750'
+            }`}
+            title={isRecording ? 'Listening… tap to stop' : 'Ask by voice (Gemini Voice Assistant)'}
+          >
+            {isRecording ? <MicOff className="w-3.5 h-3.5 text-white" /> : <Mic className="w-3.5 h-3.5" />}
+          </button>
           <input
             type="text"
             value={aiQuestion}
             onChange={(e) => setAiQuestion(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleAskAI(aiQuestion)}
-            placeholder="Ask an aviation weather question…"
+            placeholder={isRecording ? 'Listening… Speak now' : 'Ask an aviation weather question…'}
             className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 outline-none focus:border-indigo-500"
           />
           <button

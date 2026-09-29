@@ -22,11 +22,14 @@ import {
   ExternalLink,
   Layers,
   RefreshCw,
+  Mic,
+  MicOff,
 } from 'lucide-react';
 import { LocationData, VerifiedWeatherData, ChatMessage } from '../types';
 import { CropInfo, getRegionalCrops } from '../data/regionalCrops';
-import { searchLocations, reverseGeocode, sendChatMessage } from '../services/api';
+import { searchLocations, reverseGeocode, sendChatMessage, transcribeAudioApi } from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
+import { SPEECH_LANG } from '../i18n/briefLabels';
 
 interface FarmerModeDashboardProps {
   currentLocation: LocationData;
@@ -321,7 +324,73 @@ export const FarmerModeDashboard: React.FC<FarmerModeDashboardProps> = ({
 
   const [chatInput, setChatInput] = useState('');
   const [isAiResponding, setIsAiResponding] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Voice Assistant with Web Speech API and Gemini multimodal transcription fallback
+  const handleStartVoice = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SR) {
+      const r = new SR();
+      r.lang = SPEECH_LANG[language] || 'en-IN';
+      r.interimResults = false;
+      r.maxAlternatives = 1;
+      r.onresult = (ev: any) => {
+        const text = ev.results[0][0].transcript;
+        if (text?.trim()) {
+          setChatInput(text.trim());
+          handleSendFarmerQuery(text.trim());
+        }
+      };
+      r.onerror = () => setIsRecording(false);
+      r.onend = () => setIsRecording(false);
+      setIsRecording(true);
+      r.start();
+      return;
+    }
+    // Fallback: MediaRecorder + Gemini Audio Transcription API
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      const mr = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mr;
+      mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64 = (reader.result as string).split(',')[1];
+          try {
+            const transcript = await transcribeAudioApi(base64, mimeType, language);
+            if (transcript?.trim()) {
+              setChatInput(transcript.trim());
+              handleSendFarmerQuery(transcript.trim());
+            } else {
+              alert('Could not transcribe voice. Please type your query.');
+            }
+          } catch {
+            alert('Voice transcription failed. Please type your query.');
+          }
+        };
+        reader.readAsDataURL(blob);
+        setIsRecording(false);
+      };
+      mr.start();
+      setIsRecording(true);
+      setTimeout(() => { if (mr.state === 'recording') mr.stop(); }, 8000);
+    } catch {
+      alert('Microphone access denied. Please allow microphone permissions and try again.');
+    }
+  };
 
   // Auto-scroll chat to bottom
   const scrollToChatBottom = () => {
@@ -847,6 +916,18 @@ export const FarmerModeDashboard: React.FC<FarmerModeDashboardProps> = ({
 
         {/* Chat Input Bar */}
         <div className="p-2 border-t border-slate-800 bg-slate-950/80 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleStartVoice}
+            className={`h-9 w-9 rounded-xl flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+              isRecording
+                ? 'bg-rose-600 text-white animate-pulse shadow-lg shadow-rose-600/50'
+                : 'bg-slate-900 border border-slate-700/80 text-emerald-400 hover:bg-slate-800'
+            }`}
+            title={isRecording ? 'Listening… tap to stop' : 'Ask by voice (Gemini Voice Assistant)'}
+          >
+            {isRecording ? <MicOff className="w-4 h-4 text-white" /> : <Mic className="w-4 h-4" />}
+          </button>
           <input
             type="text"
             value={chatInput}
@@ -857,7 +938,7 @@ export const FarmerModeDashboard: React.FC<FarmerModeDashboardProps> = ({
                 handleSendFarmerQuery();
               }
             }}
-            placeholder="Ask about rain timing, irrigation, or spraying..."
+            placeholder={isRecording ? 'Listening… Speak now' : 'Ask about rain timing, irrigation, or spraying...'}
             className="flex-1 h-9 px-3 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-emerald-400"
           />
           <button
